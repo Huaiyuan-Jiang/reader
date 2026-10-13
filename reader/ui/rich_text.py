@@ -129,11 +129,12 @@ def split_stable(text: str) -> int:
     pos = 0
     best = 0
     fence = False
+    last_content = len(text.rstrip())
     for ln in text.split("\n")[:-1]:          # 最后一行可能还没写完，不看
         end = pos + len(ln) + 1
         if _FENCE.match(ln):
             fence = not fence
-        elif not fence and not ln.strip() and end < len(text) and text[end:].strip():
+        elif not fence and not ln.strip() and end < last_content:
             best = end
         pos = end
     return best
@@ -330,7 +331,7 @@ if __name__ == "__main__":
     lab.setWordWrap(True)
     lab.setTextFormat(Qt.RichText)
     lab.setText(md_to_html(sample, cursor="acc"))
-    theme.on_change(lambda _n: lab.setText(md_to_html(sample, cursor="acc")))
+    theme.on_change(lambda _n: lab.setText(md_to_html(sample, cursor="acc")), owner=lab)
     sa = QScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QScrollArea.NoFrame)

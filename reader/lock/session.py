@@ -29,14 +29,16 @@
 
 from __future__ import annotations
 
+import os
 import time
+from .state import _day_key
 
 from . import state as _state
 from .emergency import EmergencyExit
 from .signal import Signal
 from .state import (
     STATUS_PATH, HEARTBEAT_INTERVAL, SESSION_STATE_PATH, SessionState, StatusStore,
-    is_stale, mark_forced_quit, read_session_state,
+    mark_forced_quit, read_session_state,
 )
 from .timer import ReadingTimer
 
@@ -46,8 +48,10 @@ class LockSession:
                  emergency_required: int = 3, heartbeat_interval: float = HEARTBEAT_INTERVAL,
                  planned_default: int = 0,
                  state_path=SESSION_STATE_PATH, status_path=STATUS_PATH,
-                 target_minutes: int = 45, allow_overtime: bool = False):
+                 target_minutes: int = 45, allow_overtime: bool = False,
+                 monotonic_clock=None):
         self._clock = clock
+        self._elapsed_clock = monotonic_clock or (time.monotonic if clock is time.time else clock)
         self._state_path = state_path
         self._heartbeat_interval = heartbeat_interval
 
@@ -61,7 +65,7 @@ class LockSession:
         self._active = False
         self.allow_overtime = allow_overtime
         self._reached = False          # 已经读满计划时间（多读阶段）
-        self._reported = 0.0           # 已经写进日报的秒数（多读阶段按差额补）
+        self._reported_by_day: dict[str, float] = {}
         self.last_away = 0.0           # 最近一次离开了多久（秒），界面写「刚才离开了 3 分 12 秒」
 
         # 信号
@@ -77,16 +81,21 @@ class LockSession:
     def _now(self, now: float | None) -> float:
         return self._clock() if now is None else now
 
+    def _elapsed_now(self, now: float) -> float:
+        return now if self._clock is not time.time else self._elapsed_clock()
+
     def start(self, minutes: int, now: float | None = None) -> SessionState:
         """开始一次读书。minutes = 这次打算读多久。"""
         now = self._now(now)
+        self.recover(now)
         self.session = SessionState.new(minutes, now)
-        self.timer.start(now)
+        self.session.pid = os.getpid()
+        self.timer.start(now, elapsed_now=self._elapsed_now(now))
         self._active = True
         self._last_heartbeat = now
         self._left_at = None
         self._reached = False
-        self._reported = 0.0
+        self._reported_by_day = {}
         self.last_away = 0.0
         self.emergency.cancel()
         self._write_state()
@@ -115,7 +124,9 @@ class LockSession:
         并把判定发呆时扣下的那 5 分钟补回来（credit_idle=False 就不补）。"""
         if not self._active:
             return
-        resumed = self.timer.ping(self._now(now), credit_idle=credit_idle)
+        wall_now = self._now(now)
+        resumed = self.timer.ping(wall_now, credit_idle=credit_idle,
+                                  elapsed_now=self._elapsed_now(wall_now))
         if resumed:
             self.idle.emit(False)
         self._emit_progress()
@@ -125,7 +136,7 @@ class LockSession:
         if not self._active:
             return
         now = self._now(now)
-        event = self.timer.tick(now)
+        event = self.timer.tick(now, elapsed_now=self._elapsed_now(now))
         if event == "idle":
             self.idle.emit(True)
         self._sync_credited()
@@ -152,17 +163,19 @@ class LockSession:
         self.time_up.emit()
 
     def _flush_extra(self) -> None:
-        delta = self.timer.credited - self._reported
-        if delta > 0:
-            self.status.add_credit(delta)
-            self._reported = self.timer.credited
+        current = self.timer.credited_by_day
+        for day, value in current.items():
+            delta = value - self._reported_by_day.get(day, 0.0)
+            if abs(delta) > 1e-9:
+                self.status.add_credit(delta, day_key=day)
+            self._reported_by_day[day] = value
 
     def on_left(self, now: float | None = None) -> None:
         """应用失去激活。暂停计时，记下离开时刻。"""
         if not self._active or self.timer.left_now:
             return
         now = self._now(now)
-        self.timer.left(now)
+        self.timer.left(now, elapsed_now=self._elapsed_now(now))
         self._left_at = now
         # 离开当下就计一次：离开后这次读书直接结束（时间到 / 强行关掉）也不会漏记。
         # 读满之后（多读阶段）随时可以走，不算「离开」，只暂停计时。
@@ -175,7 +188,7 @@ class LockSession:
         if not self._active or not self.timer.left_now:
             return
         now = self._now(now)
-        self.timer.returned(now)
+        self.timer.returned(now, elapsed_now=self._elapsed_now(now))
         self.last_away = max(0.0, now - self._left_at) if self._left_at is not None else 0.0
         self._left_at = None
         self.returned.emit()
@@ -212,7 +225,7 @@ class LockSession:
         if not self._active or self.session is None:
             return
         now = self._now(now)
-        self.timer.stop(now)
+        self.timer.stop(now, elapsed_now=self._elapsed_now(now))
         self._sync_credited()
         if self._reached:
             # 多读阶段结束：会话早记成读完了，只补多读的差额
@@ -225,7 +238,7 @@ class LockSession:
             if state_status == _state.EMERGENCY_EXIT:
                 self.session.exit_reason = self.emergency.reason
             self._write_state()
-            self.status.add_credit(self.timer.credited)
+            self._flush_extra()
             if state_status == _state.EMERGENCY_EXIT:
                 self.status.log_emergency(self.emergency.reason)
         self._active = False
@@ -239,14 +252,20 @@ class LockSession:
         """
         now = self._now(now)
         prev = read_session_state(self._state_path)
-        if prev is None:
+        if prev is None or prev.status != _state.ACTIVE:
             return None
-        if not is_stale(prev, now):
+        if prev.pid is not None and _state.process_is_alive(prev.pid):
             return None
         mark_forced_quit(prev)
         prev.write(self._state_path)
-        self.status.add_credit(prev.credited_seconds)
-        self.status.bump("forced_quits")
+        by_day = prev.credited_by_day if isinstance(prev.credited_by_day, dict) else {}
+        by_day = {str(day): max(0.0, float(value)) for day, value in by_day.items()
+                  if isinstance(value, (int, float)) and value > 0}
+        if not by_day and prev.credited_seconds > 0:
+            by_day = {_day_key(prev.heartbeat): prev.credited_seconds}
+        for day, seconds in by_day.items():
+            self.status.add_credit(seconds, day_key=day)
+        self.status.bump("forced_quits", day_key=_day_key(prev.heartbeat))
         return prev
 
     # ── 日报 ─────────────────────────────────────────────────
@@ -273,6 +292,7 @@ class LockSession:
     def _write_state(self) -> None:
         if self.session is not None:
             self._sync_credited()
+            self.session.credited_by_day = self.timer.credited_by_day
             self.session.write(self._state_path)
 
     def _emit_progress(self) -> None:

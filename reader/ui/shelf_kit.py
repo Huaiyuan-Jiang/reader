@@ -71,7 +71,7 @@ def on_theme(widget: QWidget, fn: Callable[[], None]) -> None:
             fn()
         except RuntimeError:     # C++ 对象已删
             pass
-    theme.on_change(_cb)
+    theme.on_change(_cb, owner=widget)
 
 
 def repaint_on_theme(widget: QWidget) -> None:

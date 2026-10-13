@@ -103,7 +103,8 @@ def _settings_path() -> Path:
 
 def saved_choice() -> str:
     try:
-        v = json.loads(_settings_path().read_text("utf-8")).get("theme", "dark")
+        data = json.loads(_settings_path().read_text("utf-8-sig"))
+        v = data.get("theme", "dark") if isinstance(data, dict) else "dark"
     except (OSError, ValueError):
         v = "dark"
     return v if v in ("dark", "light", "system") else "dark"
@@ -139,9 +140,10 @@ def set_theme(choice: str, *, save: bool = True) -> None:
     if save:
         try:
             p = _settings_path()
-            data = json.loads(p.read_text("utf-8")) if p.exists() else {}
+            from reader.lock.state import read_json, atomic_write_json
+            data = read_json(p) or {}
             data["theme"] = choice
-            p.write_text(json.dumps(data, ensure_ascii=False, indent=1), "utf-8")
+            atomic_write_json(p, data)
         except (OSError, ValueError):
             pass
     app = QApplication.instance()
@@ -151,8 +153,35 @@ def set_theme(choice: str, *, save: bool = True) -> None:
         bus().changed.emit(name)
 
 
-def on_change(cb: Callable[[str], None]) -> None:
-    bus().changed.connect(cb)
+def on_change(cb: Callable[[str], None], owner: QObject | None = None) -> Callable:
+    """Subscribe for a widget's lifetime, or return a manual unsubscribe hook."""
+    notifier = bus()
+    bound = getattr(cb, '__self__', None)
+    if isinstance(bound, QObject):
+        owner = owner if owner is not None else bound
+        if hasattr(cb, '__func__'):
+            method_ref = weakref.WeakMethod(cb)
+
+            def invoke(name):
+                method = method_ref()
+                if method is not None:
+                    method(name)
+            cb = invoke
+    notifier.changed.connect(cb)
+    connected = True
+
+    def disconnect(*_unused) -> None:
+        nonlocal connected
+        if connected:
+            connected = False
+            try:
+                notifier.changed.disconnect(cb)
+            except (RuntimeError, TypeError, SystemError):
+                pass
+
+    if owner is not None:
+        owner.destroyed.connect(disconnect)
+    return disconnect
 
 
 def tok(key: str, theme: str | None = None) -> str:
@@ -198,7 +227,7 @@ def style(widget: QWidget, template: str) -> None:
                 w.setStyleSheet(qss(template))
             except RuntimeError:   # C++ 对象已删
                 pass
-    on_change(_again)
+    on_change(_again, owner=widget)
 
 
 # ── 字体 ─────────────────────────────────────────────────────

@@ -285,7 +285,7 @@ class FocusAndLoadingTests(Case):
         self.assertEqual(len(r.summaries), 1)
         s = r.summaries[0]
         self.assertEqual(s["reason"], "open_failed")
-        self.assertIn("坏文件", s["error"])
+        self.assertIn("文件是否完整", s["error"])
         self.assertIsNone(s["rewrite_note"])
 
 

@@ -50,10 +50,10 @@ class PdfBook(Book):
         """"text" = 自带文字层；"ocr" = 扫描版，已经（部分）识别；"none" = 扫描版，还没识别 / 识别不了。"""
         if self.has_text:
             return "text"
-        return "ocr" if self.ocr is not None and self.ocr.done_pages() else "none"
+        return "ocr" if self.ocr is not None and self.ocr.done_pages(self.pages) else "none"
 
     def ocr_progress(self) -> tuple[int, int]:
-        return (self.ocr.done_pages() if self.ocr else 0), self.pages
+        return (self.ocr.done_pages(self.pages) if self.ocr else 0), self.pages
 
     def ocr_running(self) -> bool:
         """后台现在是不是真的在识别这本（书架的 OcrQueue 可能在做别的书，或者已经停了）。"""

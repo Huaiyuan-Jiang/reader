@@ -156,6 +156,9 @@ def _default_watcher():
 
 def release_on_top(window: QWidget) -> None:
     """时间到了：窗口不再压在最上面（还是全屏，主人可能正读到半句）。只改窗口标志，不碰别的程序。"""
+    release = getattr(window, 'release_shortcuts', None)
+    if release is not None:
+        release()
     visible = window.isVisible()
     full = window.isFullScreen()
     window.setWindowFlag(Qt.WindowStaysOnTopHint, False)
@@ -344,6 +347,7 @@ class ReadingScreen(QObject):
         self.start_loc = None
         self.started_at: float | None = None
         self.ended = False
+        self._disposed = False
         self._summary: dict | None = None
 
         # 小测
@@ -441,7 +445,7 @@ class ReadingScreen(QObject):
         self.area.set_loading(None)
         if isinstance(book, BaseException) or book is None:
             self._close_and_emit({**self._base_summary(), "reason": "open_failed",
-                                  "error": f"这本书打不开：{book}"})
+                                  "error": "这本书无法打开，请检查文件是否完整或需要密码，再重新选择文件。"})
             return
         self.book = book
         self.view = self.deps.make_view(book)
@@ -520,7 +524,7 @@ class ReadingScreen(QObject):
         planned = self.minutes * 60
         credited = t.credited
         remaining = t.remaining(self.minutes)
-        today = self.today_base + credited
+        today = self._today_credited()
         self.strip.set_times(remaining, credited, planned, today, s.extra_seconds)
         self.strip.set_state(self.mode())
         if self.area.leave_card.isVisible():
@@ -528,6 +532,14 @@ class ReadingScreen(QObject):
         if self.overlay_text is not None:
             st = AWAY if t.left_now else IDLE if t.idle else READING
             self.overlay_text.update(st, remaining)
+
+    def _today_credited(self) -> float:
+        """Current day's total, including this session's unflushed credit."""
+        today = datetime.fromtimestamp(self._clock()).strftime("%Y-%m-%d")
+        persisted = float(self.session.status.today().credited_seconds)
+        session_credit = self.session.timer.credited_by_day.get(today, 0.0)
+        already_saved = self.session._reported_by_day.get(today, 0.0)
+        return persisted + session_credit - already_saved
 
     def mode(self) -> str:
         s = self.session
@@ -555,6 +567,8 @@ class ReadingScreen(QObject):
             return False
         if ev.type() in (QEvent.MouseButtonPress, QEvent.Wheel) and isinstance(obj, QWidget) \
                 and self.session.active and obj.window() is self.widget.window():
+            if self.exit_flow.active or obj is self.strip.exit_btn:
+                return False
             was_idle = self.session.timer.idle
             self.session.ping()
             if was_idle:
@@ -870,7 +884,7 @@ class ReadingScreen(QObject):
             week = 0
         return {"read": int(credited // 60),
                 "left": minutes_left(s.timer.remaining(self.minutes)) if s.session else self.minutes,
-                "today": int((self.today_base + credited) // 60), "target": TARGET_MINUTES,
+                "today": int(self._today_credited() // 60), "target": TARGET_MINUTES,
                 "week_exits": week, "now": datetime.fromtimestamp(self._clock())}
 
     def _exit_confirmed(self, step: int, reason) -> None:
@@ -898,7 +912,7 @@ class ReadingScreen(QObject):
         if self.window is not None:
             self.deps.release_top(self.window)
         self._drop_overlays()
-        today_min = int((self.today_base + self.session.timer.credited) // 60)
+        today_min = int(self._today_credited() // 60)
         a.time_up.set_info(self.minutes, today_min, TARGET_MINUTES)
         a.show_card(a.time_up)
         self.refresh()
@@ -1038,6 +1052,9 @@ class ReadingScreen(QObject):
 
     def dispose(self) -> None:
         """收摊：停表、撤事件过滤、断开 LeaveWatcher、撤遮罩、关窗口。不发 finished。"""
+        if self._disposed:
+            return
+        self._disposed = True
         self.ended = True
         self._tick.stop()
         self._save_timer.stop()
@@ -1054,8 +1071,10 @@ class ReadingScreen(QObject):
         self._drop_overlays()
         if self.window is not None:
             self.window.close()
+            self.window.deleteLater()
         elif not self.locked:
             self.widget.close()
+            self.widget.deleteLater()
 
 
 # ── 演示 ─────────────────────────────────────────────────────

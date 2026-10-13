@@ -336,13 +336,22 @@ class PdfView(BookView):
     def goto(self, loc: Loc) -> None:
         if not self._ready():
             return
-        p = self._row(max(0, min(loc.doc, len(self._tops) - 1)))[0]
+        self._target_page = max(0, min(loc.doc, len(self._tops) - 1))
+        p = self._row(self._target_page)[0]
         self._scroll_to(self._tops[p] - PAD_Y, user=False)
 
     def current_loc(self) -> Loc:
         if not self._ready():
             return Loc(0)
-        return Loc(self._page_at(self._y + self._view_h() / 2))
+        first = self._page_at(self._y + self._view_h() / 2)
+        target = getattr(self, '_target_page', None)
+        if target is not None and target in self._row(first) and self._shown(target):
+            first = target
+        return Loc(first)
+
+    def _toc_loc(self) -> Loc:
+        """双页时让目录高亮这一排里较后的章节（常见于右页新起一章）。"""
+        return self.current_loc()
 
     def page_label(self, loc: Loc) -> str:
         return f"第 {loc.doc + 1} 页"
@@ -474,10 +483,12 @@ class PdfView(BookView):
     def _relayout(self, keep: bool = True) -> None:
         if self.book is None or not self._sizes:
             return
+        at_bottom = bool(keep and self._tops and self._y >= self._max_y() - 0.5)
         anchor = None
-        if keep and self._tops:
-            p = self._page_at(self._y + PAD_Y)
-            anchor = (p, (self._y - self._tops[p]) / max(1.0, self._hs[p]))
+        if keep and self._tops and not at_bottom:
+            anchor_y = self._y + PAD_Y
+            p = self._page_at(anchor_y)
+            anchor = (p, (anchor_y - self._tops[p]) / max(1.0, self._hs[p]))
         W = max(200, self.canvas.width() - 12)
         H = self._view_h()
         avail = max(160.0, W - 2 * PAD_X)
@@ -512,9 +523,11 @@ class PdfView(BookView):
             i += len(row)
         self._tops, self._ws, self._hs, self._xs = tops, ws, hs, xs
         self._total_h = y - GAP + PAD_Y
-        if anchor:
+        if at_bottom:
+            self._y = self._max_y()
+        elif anchor:
             p, frac = anchor
-            self._y = self._tops[p] + frac * self._hs[p]
+            self._y = self._tops[p] + frac * self._hs[p] - PAD_Y
         self._scroll_to(self._y, user=False)
 
     def _page_at(self, y: float) -> int:
@@ -559,6 +572,8 @@ class PdfView(BookView):
         self._scroll_to(self._y + dy, user=True)
 
     def _scroll_to(self, y: float, user: bool = True) -> None:
+        if user:
+            self._target_page = None
         y = max(0.0, min(y, self._max_y()))
         if user and y > self._y:
             by = self._barrier_y()
@@ -940,6 +955,14 @@ class PdfView(BookView):
 
     def add_highlight(self, page: int, rects: list, text: str) -> dict:
         h = {"page": page, "rects": [[round(v, 2) for v in r] for r in rects], "text": text}
+        key = tuple(sorted(tuple(r) for r in h["rects"]))
+        for existing in self._hls:
+            if existing.get("page") != page:
+                continue
+            old_key = tuple(sorted(tuple(round(float(v), 2) for v in r)
+                                   for r in existing.get("rects", [])))
+            if old_key == key:
+                return existing
         self._hls.append(h)
         self._update_bar()
         self.canvas.update()
@@ -1011,8 +1034,9 @@ class PdfView(BookView):
             return
         cur = self.current_loc().doc
         n = self.book.pages
-        last = max(j for j in self._row(cur) if self._shown(j) or j == cur)   # 双页：右页的页码
-        self.bar.set_page(cur + 1, n, last=last + 1)
+        pages = [j for j in self._row(cur) if self._shown(j) or j == cur]
+        first, last = min(pages), max(pages)
+        self.bar.set_page(first + 1, n, last=last + 1)
         title = self._chapter_title(Loc(cur))
         pct = round(100 * (last + 1) / n)
         self.bar.set_info(f"{title} · {pct}%" if title else f"{pct}%")

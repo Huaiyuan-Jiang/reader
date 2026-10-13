@@ -191,7 +191,8 @@ class AISettingsDialog(QDialog):
         self.extra.setPlainText(json.dumps(p.extra_body, ensure_ascii=False))
         self.harness_command.setPlainText(json.dumps(p.harness_command, ensure_ascii=False))
         self.key.clear()
-        self.clear_key.setChecked(False)
+        # Keep a pending deletion visible when the user switches away and back.
+        self.clear_key.setChecked(self._current in self._keys and self._keys[self._current] == '')
         self._protocol_visibility()
 
     def _protocol_visibility(self):

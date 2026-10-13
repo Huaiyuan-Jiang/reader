@@ -26,6 +26,7 @@ import json
 import os
 import posixpath
 import re
+import shutil
 import tempfile
 import threading
 import zipfile
@@ -65,7 +66,7 @@ def _atomic_write(path: Path, data) -> None:
 
 def _read(path: Path) -> dict | None:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             v = json.load(f)
         return v if isinstance(v, dict) else None
     except (OSError, ValueError):
@@ -105,7 +106,7 @@ def clean_title(title: str, stem: str) -> tuple[str, str]:
     # 文件名里的「_」原本多半是冒号（文件名里不能有冒号）：中文之间换成「：」，后面跟空格的换成「: 」
     title = re.sub(r"(?<=[㐀-鿿])_(?=[㐀-鿿])", "：", title)
     title = re.sub(r"_\s", ": ", title).replace("_", " ")
-    title = re.sub(r"\s+", " ", title).strip() or stem
+    title = re.sub(r"\s+", " ", title).strip() or stem.strip() or "未命名"
     return title, guess_author
 
 
@@ -139,7 +140,32 @@ def _entry_to_dict(e: BookEntry) -> dict:
 
 
 def _entry_from_dict(d: dict) -> BookEntry:
+    if not isinstance(d, dict):
+        raise ValueError('书架条目格式不正确')
+    for key in ('id', 'path', 'title'):
+        if not isinstance(d.get(key), str) or not d[key] or '\x00' in d[key]:
+            raise ValueError('书架条目缺少有效的标识、路径或书名')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', d['id']):
+        raise ValueError('书架条目标识格式不正确')
+    for key in ('author', 'kind', 'added', 'cover'):
+        if key in d and not isinstance(d[key], str):
+            raise ValueError('书架文字字段格式不正确')
+    if d.get('kind') not in ('pdf', 'epub'):
+        raise ValueError('书架文件格式不正确')
+    for key in ('scanned', 'ocr_done'):
+        if key in d and type(d[key]) is not bool:
+            raise ValueError('书架识别状态格式不正确')
+    if d.get('last_read') is not None and not isinstance(d['last_read'], str):
+        raise ValueError('书架时间字段格式不正确')
     pos = d.get("position")
+    if pos is not None and (not isinstance(pos, (list, tuple)) or len(pos) != 2
+                            or any(type(n) is not int or n < 0 for n in pos)):
+        raise ValueError('阅读位置格式不正确')
+    if 'pages' in d and (type(d['pages']) is not int or d['pages'] < 0):
+        raise ValueError('书页数量格式不正确')
+    if 'quiz_done' in d and (not isinstance(d['quiz_done'], list)
+                            or any(type(n) is not int or n < 0 for n in d['quiz_done'])):
+        raise ValueError('小测记录格式不正确')
     known = {k: d[k] for k in BookEntry.__dataclass_fields__ if k in d and k not in ("position", "missing")}
     e = BookEntry(position=Loc(int(pos[0]), int(pos[1])) if pos else None, missing=False,
                   **{"author": "", "kind": "", "added": "", "last_read": None, "scanned": False,
@@ -153,7 +179,51 @@ class Library:
         self.root = Path(root) if root is not None else default_root()
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._data = _read(self.root / LIB_FILE) or {}
+        self.load_warnings: list[str] = []
+        library_path = self.root / LIB_FILE
+        loaded = _read(library_path)
+        damaged = loaded is None and library_path.exists()
+        self._data = loaded or {}
+        for field, empty in (('books', {}), ('removed', {}), ('sessions', []), ('settings', {})):
+            value = self._data.get(field, empty)
+            if not isinstance(value, type(empty)):
+                damaged = True
+                value = empty
+            self._data[field] = value
+        for key in ('last_add_dir', 'auth_same_ok'):
+            if key in self._data['settings'] and not isinstance(self._data['settings'][key], str):
+                damaged = True
+                self._data['settings'].pop(key)
+        for field in ('books', 'removed'):
+            valid = {}
+            for bid, raw in self._data[field].items():
+                try:
+                    entry = _entry_from_dict(raw)
+                    if entry.id != bid:
+                        raise ValueError('书架标识不一致')
+                    valid[bid] = raw
+                except (ValueError, TypeError, KeyError, IndexError, OSError):
+                    damaged = True
+            self._data[field] = valid
+        sessions = [r for r in self._data['sessions'] if isinstance(r, dict)
+                    and isinstance(r.get('summary', {}), dict)
+                    and isinstance(r.get('started', ''), str)
+                    and isinstance(r.get('ended', ''), str)]
+        damaged = damaged or len(sessions) != len(self._data['sessions'])
+        self._data['sessions'] = sessions
+        current = self._data.get('current')
+        if current is not None and (not isinstance(current, str) or current not in self._data['books']):
+            damaged = True
+            self._data['current'] = None
+        if damaged:
+            backup = library_path.with_name(library_path.name + '.recovery-' +
+                        datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.bak')
+            try:
+                shutil.copy2(library_path, backup)
+            except OSError as e:
+                raise ValueError('书架文件损坏且无法备份，请先备份数据目录后重试。') from e
+            self.load_warnings.append('书架文件有损坏，原文件已备份为 ' + backup.name +
+                                      '。可读取的书籍已保留；缺少的书可以重新添加。')
         self._data.setdefault("version", 1)
         self._data.setdefault("books", {})
         self._data.setdefault("removed", {})
@@ -173,7 +243,14 @@ class Library:
         return self.root / "books" / f"{book_id}.json"
 
     def _extra(self, book_id: str) -> dict:
-        return _read(self._book_file(book_id)) or {}
+        path = self._book_file(book_id)
+        data = _read(path)
+        if data is None and path.exists():
+            backup = path.with_name(path.name + '.recovery-' +
+                                   datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.bak')
+            shutil.copy2(path, backup)
+            self.load_warnings.append('阅读记录有损坏，原文件已备份为 ' + backup.name)
+        return data or {}
 
     def _save_extra(self, book_id: str, data: dict) -> None:
         _atomic_write(self._book_file(book_id), data)
@@ -204,34 +281,26 @@ class Library:
         with self._lock:
             if bid in self._data["books"]:
                 return self.get(bid)
-            old = self._data["removed"].pop(bid, None)
-        if old is not None:          # 以前拿掉过：原样放回来，读到哪都还在
-            with self._lock:
-                old["path"] = str(p)
-                self._data["books"][bid] = old
-                if not self._data["current"]:
-                    self._data["current"] = bid
-                self._save()
-            return self.get(bid)
+            old = self._data["removed"].get(bid)
 
         from reader.books import open_book
         try:
             book = open_book(p)
-        except ValueError:
-            raise
         except Exception as e:  # noqa: BLE001
-            raise ValueError(f"打不开：{type(e).__name__}: {e}") from e
+            raise ValueError("这本书无法打开，请检查文件是否完整、是否需要密码，或重新下载后再添加。") from e
         title, guess_author = clean_title(book.title, p.stem)
         kind = book.kind
         extra = {"sections": [[s.title, s.start.doc, s.start.block, s.level] for s in book.sections],
                  "toc": [[t.title, t.loc.doc, t.loc.block, t.level] for t in book.toc[:2000]],
                  "highlights": []}
+        from reader.books.ocr import file_key
+        extra['source_key'] = file_key(p)
         pages, scanned, ocr_done = 0, False, False
         if kind == "pdf":
             pages = book.pages
             scanned = not book.has_text
             store = getattr(book, "ocr", None)       # 同一个文件以前识别过（按内容认）：直接算做完
-            ocr_done = bool(scanned and store is not None and store.done_pages() >= pages)
+            ocr_done = bool(scanned and store is not None and store.done_pages(pages) >= pages)
         else:
             extra["doc_sizes"] = [len(b) for b in book.blocks]
         cover = self._make_cover(bid, book)
@@ -246,6 +315,18 @@ class Library:
                           kind=kind, position=None, added=_now(), last_read=None,
                           scanned=scanned, missing=False, pages=pages, cover=cover, ocr_done=ocr_done)
         with self._lock:
+            if old is not None:
+                # Validate and refresh the file before restoring any reading records.
+                previous_extra = self._extra(bid)
+                same_file = previous_extra.get('source_key', extra['source_key']) == extra['source_key']
+                if same_file:
+                    entry.position = _entry_from_dict(old).position
+                    entry.last_read = old.get('last_read')
+                    entry.quiz_done = old.get('quiz_done', [])
+                    extra['highlights'] = previous_extra.get('highlights', [])
+                if entry.position is not None and kind == 'pdf':
+                    entry.position = Loc(min(entry.position.doc, max(0, pages - 1)), 0)
+                self._data['removed'].pop(bid, None)
             self._save_extra(bid, extra)
             self._data["books"][bid] = _entry_to_dict(entry)
             if not self._data["current"]:
@@ -294,9 +375,44 @@ class Library:
         p = Path(new_path).expanduser().resolve()
         if not p.is_file():
             raise ValueError("找不到这个文件")
+        entry = self.get(book_id)
+        if entry is None:
+            raise ValueError('这本书已经从书架拿掉了')
+        if p.suffix.lower() != '.' + entry.kind:
+            raise ValueError('请选择与原书相同格式的 PDF 或 EPUB')
+        with self._lock:
+            if any(b.id != book_id and book_id_for(b.path) == book_id_for(p)
+                   for b in self.books()):
+                raise ValueError('这个文件已经在书架上，请选择原来那本书的文件。')
+        from reader.books import open_book
+        book = None
+        try:
+            book = open_book(p)
+            if book.kind != entry.kind:
+                raise ValueError('请选择与原书相同格式的文件')
+            title, guessed_author = clean_title(book.title, p.stem)
+            metadata = {'title': title, 'author': book.author or guessed_author,
+                        'pages': book.pages if book.kind == 'pdf' else 0,
+                        'scanned': book.kind == 'pdf' and not book.has_text,
+                        'cover': self._make_cover(book_id, book)}
+            extra = self._extra(book_id)
+            extra.update(sections=[[s.title, s.start.doc, s.start.block, s.level] for s in book.sections],
+                         toc=[[t.title, t.loc.doc, t.loc.block, t.level] for t in book.toc[:2000]])
+            if book.kind == 'epub':
+                extra['doc_sizes'] = [len(b) for b in book.blocks]
+        except Exception as e:
+            raise ValueError('这个文件无法作为原书打开，请重新选择。') from e
+        finally:
+            if book is not None:
+                (book.doc if book.kind == 'pdf' else book.zip).close()
         with self._lock:
             d = self._data["books"][book_id]
             d["path"] = str(p)
+            d.update(metadata)
+            d['ocr_done'] = False
+            if entry.kind == 'pdf' and d.get('position'):
+                d['position'] = [min(d['position'][0], max(0, metadata['pages'] - 1)), 0]
+            self._save_extra(book_id, extra)
             self._save()
         return self.get(book_id)
 
@@ -328,13 +444,15 @@ class Library:
         if e is None or e.position is None:
             return None
         if e.kind == "pdf":
-            return min(1.0, (e.position.doc + 1) / e.pages) if e.pages else None
+            return min(e.pages, max(0, e.position.doc + 1)) / e.pages if e.pages else None
         sizes = self._extra(book_id).get("doc_sizes") or []
+        if not isinstance(sizes, list) or any(type(n) is not int or n < 0 for n in sizes):
+            return None
         total = sum(sizes)
         if not total:
             return None
         done = sum(sizes[:e.position.doc]) + e.position.block
-        return max(0.0, min(1.0, done / total))
+        return min(total, max(0, done)) / total
 
     def place(self, book_id: str, loc: Loc | None = None) -> dict:
         """某个位置在书里的哪儿：{"section": 最细的小节名, "chapter": 最上一层的章名}（没有就是 ""）。"""
@@ -599,6 +717,7 @@ class OcrQueue:
             with self._lock:
                 if not self._todo:
                     self._current = None
+                    self._thread = None
                     return
                 bid = self._current = self._todo.pop(0)
             e = self.library.get(bid)
@@ -625,7 +744,8 @@ class OcrQueue:
 
         runner = self._runner or ocr.run_book
         store = runner(path, title=e.title, progress=cb, stop=self._stop)
-        done = store.done_pages() if store is not None else self._progress[e.id][0]
+        done = (store.done_pages(e.pages) if isinstance(store, ocr.OcrStore) else store.done_pages()) \
+            if store is not None else self._progress[e.id][0]
         with self._lock:
             self._progress[e.id] = (done, total)
         if done >= total:

@@ -1,4 +1,4 @@
-"""锁屏用到的 Qt 窗口件 —— 全是普通 Qt 特性，不装钩子、不抢焦点、不动别的程序。
+"""阅读窗口与遮罩。计时阅读期间使用临时 Alt+Tab 钩子，不抢焦点。
 
 主人要的效果：读书时别的程序照常在后台跑，但一个会话里主人没法把它们切到前面来。
 这里靠的就是一个无边框、全屏、置顶（Qt.WindowStaysOnTopHint）的窗口：后开的普通窗口也压在它下面。
@@ -42,6 +42,9 @@ class ReadingWindow(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._content: QWidget | None = None
+        from .shortcuts import AltTabGuard
+        self._shortcuts = AltTabGuard()
+        self.destroyed.connect(self._shortcuts.stop)
 
     def set_content_widget(self, widget: QWidget) -> None:
         if self._content is not None:
@@ -56,6 +59,18 @@ class ReadingWindow(QWidget):
             _fill_screen(self, self._screen)
         self.showFullScreen()
         self.raise_()
+        try:
+            self._shortcuts.start()
+        except OSError:
+            self.close()
+            raise
+
+    def release_shortcuts(self) -> None:
+        self._shortcuts.stop()
+
+    def closeEvent(self, event):
+        self.release_shortcuts()
+        super().closeEvent(event)
 
     def showEvent(self, event):  # noqa: N802 —— Qt 命名
         super().showEvent(event)

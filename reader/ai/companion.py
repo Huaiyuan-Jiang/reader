@@ -125,7 +125,9 @@ def parse_quiz(text: str, section_idx: int) -> Quiz | None:
         return None
     try:
         opts = [str(o).strip() for o in d.get("options", [])]
-        ans = int(d.get("answer"))
+        ans = d.get("answer")
+        if type(ans) is not int:
+            return None
         hints = [str(h).strip() for h in d.get("hints", [])]
     except (TypeError, ValueError):
         return None

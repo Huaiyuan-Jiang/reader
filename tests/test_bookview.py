@@ -588,7 +588,7 @@ class PdfViewTests(unittest.TestCase):
         self.assertLess(v._tops[1], v._tops[2])
         self.assertLess(v._xs[0] + v._ws[0], v._xs[1])           # 左右并排，中间有缝
         v.goto(Loc(7))                                           # 第 8 页在第 7、8 页那一排
-        self.assertEqual(v.current_loc().doc, 6)
+        self.assertEqual(v.current_loc().doc, 7)
         self.assertEqual(v.bar._page_args[0], 7)
         self.assertEqual(v.bar._page_args[3], 8)
         self.assertIn("7–8", v.bar.page.text())

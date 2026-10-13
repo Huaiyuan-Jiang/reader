@@ -20,9 +20,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 import threading
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -34,6 +36,7 @@ _CJK_GAP = re.compile(rf"(?<=[{_CJK}])\s+(?=[{_CJK}])")
 # 正在识别的书（结果文件路径 → 有几个 run_book 在跑）。后台识别和书页在同一个进程里，登记在这里就够了
 _running: dict[str, int] = {}
 _running_lock = threading.Lock()
+_save_lock = threading.Lock()
 
 
 def _mark_running(key: str, on: bool) -> None:
@@ -149,13 +152,38 @@ class OcrStore:
         self._mtime = 0.0
         self._reload()
 
+    def _disk_data(self) -> dict:
+        try:
+            data = json.loads(self.path.read_text('utf-8-sig'))
+            if not isinstance(data, dict) or not isinstance(data.get('pages'), dict):
+                return {'lang': '', 'pages': {}}
+            pages = {}
+            for key, page in data['pages'].items():
+                if not isinstance(key, str) or not key.isdecimal() or not isinstance(page, dict):
+                    continue
+                text = page.get('text', '')
+                if not isinstance(text, str):
+                    continue
+                words = page.get('words', [])
+                if not isinstance(words, list):
+                    words = []
+                clean = [w for w in words if isinstance(w, (list, tuple)) and len(w) == 6
+                         and all(type(n) in (int, float) and -1e9 <= n <= 1e9
+                                 and math.isfinite(n) for n in w[:4])
+                         and isinstance(w[4], str) and type(w[5]) is int and w[5] >= 0]
+                pages[key] = {**page, 'text': text, 'words': clean}
+            return {'lang': data.get('lang') if isinstance(data.get('lang'), str) else '',
+                    'pages': pages}
+        except (OSError, ValueError):
+            return {'lang': '', 'pages': {}}
+
     def _reload(self) -> None:
         """从文件重读（后台识别是另一个 OcrStore 在写：读书途中新识别的页要能用上）。"""
         try:
             mtime = self.path.stat().st_mtime
             if mtime == self._mtime:
                 return
-            data = json.loads(self.path.read_text("utf-8"))
+            data = self._disk_data()
         except (OSError, ValueError):
             return
         with self._lock:
@@ -176,13 +204,14 @@ class OcrStore:
             self._reload()               # 可能后台刚识别到这页
             with self._lock:
                 hit = self.data["pages"].get(str(p))
-        return hit
+        return hit if hit is not None and not hit.get('error') else None
 
-    def done_pages(self) -> int:
+    def done_pages(self, total: int | None = None) -> int:
         """已识别的页数。后台可能刚存了新的页：先看一眼文件（一次 stat，没变就不读）。"""
         self._reload()
         with self._lock:
-            return len(self.data["pages"])
+            return sum(1 for key, page in self.data['pages'].items()
+                       if not page.get('error') and (total is None or 0 <= int(key) < total))
 
     def running(self) -> bool:
         """现在有没有 run_book 在识别这本书（登记见 _running）。"""
@@ -195,15 +224,29 @@ class OcrStore:
             self.data["pages"][str(p)] = result
 
     def save(self) -> None:
-        with self._lock:
-            tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(self.data, ensure_ascii=False), "utf-8")
-            os.replace(tmp, self.path)
+        # Independent stores can finish different pages of the same book.
+        # Merge while holding the shared writer lock, then replace atomically.
+        with _save_lock, self._lock:
+            disk = self._disk_data()
+            self.data = {'lang': self.data.get('lang') or disk['lang'],
+                         'pages': {**disk['pages'], **self.data['pages']}}
+            fd, temporary = tempfile.mkstemp(prefix=self.path.name + '.', suffix='.tmp',
+                                             dir=self.path.parent)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                    json.dump(self.data, stream, ensure_ascii=False)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, self.path)
+                self._mtime = self.path.stat().st_mtime
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
 
 def run_book(pdf_path: Path, *, title: str = "", pages: list[int] | None = None,
              progress: Callable[[int, int], None] | None = None,
-             stop: threading.Event | None = None, save_every: int = 10) -> OcrStore:
+             stop: threading.Event | None = None, save_every: int = 1) -> OcrStore:
     """把一本书（或指定的页）识别完，跳过已经识别过的页。在工作线程里调。
 
     语言：先用中文识别前 3 页没识别过的页，看结果定中文还是英文（定了就存下，以后不再猜）。
@@ -246,9 +289,10 @@ def _run(store: OcrStore, pdf_path: Path, *, title: str, pages: list[int] | None
             store.put(p, ocr_page(doc[p], lang), lang)
         except Exception as e:  # noqa: BLE001
             store.put(p, {"text": "", "words": [], "error": f"{type(e).__name__}: {e}"}, lang)
+        # A completed page must be durable before telling the UI it is completed.
+        store.save()
         if progress:
             progress(i + 1, total)
-        if (i + 1) % save_every == 0:
-            store.save()
     store.save()
+    doc.close()
     return store

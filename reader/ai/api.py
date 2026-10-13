@@ -123,6 +123,9 @@ def run(prompt: str, *, profile: Profile, system=None, resume=None, model=None,
         yield Result(error=f'{p.label} 当前模型未开启图片支持。可问书中文字，或在 AI 设置中换模型。')
         return
     key = key_for(p)
+    if any(ord(ch) < 32 or ord(ch) > 126 for ch in key):
+        yield Result(error='API Key 含换行或其他无效字符，请重新粘贴完整的一行 Key')
+        return
     if not key and not ready(p):
         yield Result(error=f'请在 AI 设置中填写 {p.label} 的 API Key，或设置 {p.api_key_env}')
         return
@@ -167,6 +170,8 @@ def run(prompt: str, *, profile: Profile, system=None, resume=None, model=None,
             ev, pending = pending.result(), None
             if ev is _END:
                 break
+            if not isinstance(ev, dict):
+                raise ValueError('invalid stream event')
             if '_http_error' in ev:
                 final = Result(error=_http_error(p.label, ev['_http_error']))
                 break
@@ -221,7 +226,7 @@ def run(prompt: str, *, profile: Profile, system=None, resume=None, model=None,
         final = Result(error=f'{p.label} 连接超时，请检查网络或稍后重试')
     except httpx.HTTPError:
         final = Result(error=f'连不上 {p.label}，请检查接口地址和网络')
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError, AttributeError):
         final = Result(error=f'{p.label} 返回格式与接口类型不匹配，请检查 AI 设置')
     finally:
         if pending is not None and not pending.done():

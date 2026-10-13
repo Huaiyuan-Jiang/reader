@@ -6,6 +6,8 @@ import ctypes
 import json
 import os
 import threading
+import shutil
+from datetime import datetime
 from ctypes import wintypes
 
 from .config import ConfigError, atomic_json, data_dir
@@ -44,8 +46,9 @@ def _load() -> dict:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding='utf-8'))
-        if not isinstance(data, dict):
+        data = json.loads(path.read_text(encoding='utf-8-sig'))
+        if not isinstance(data, dict) or any(not isinstance(k, str) or not isinstance(v, str)
+                                             for k, v in data.items()):
             raise ValueError()
         return data
     except (OSError, ValueError) as e:
@@ -65,7 +68,16 @@ def get(profile_id: str) -> str:
 
 def put(profile_id: str, key: str) -> None:
     with _lock:
-        data = _load()
+        try:
+            data = _load()
+        except ConfigError:
+            path = data_dir() / 'ai-secrets.json'
+            backup = path.with_name(path.name + '.bad-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
+            try:
+                shutil.copy2(path, backup)
+            except OSError as e:
+                raise ConfigError('无法备份损坏的凭据文件，请检查数据目录的写入权限') from e
+            data = {}
         if key.strip():
             data[profile_id] = base64.b64encode(_crypt(key.strip().encode('utf-8'))).decode('ascii')
         else:

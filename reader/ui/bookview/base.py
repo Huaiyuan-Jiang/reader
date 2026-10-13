@@ -100,7 +100,7 @@ def on_theme(obj: QObject, cb: Callable[[], None]) -> None:
             cb()
         except RuntimeError:   # C++ 对象已删
             pass
-    theme.on_change(_again)
+    theme.on_change(_again, owner=obj)
 
 
 def shadow(widget: QWidget, blur: int = 30, dy: int = 12) -> None:
@@ -119,9 +119,10 @@ def _prefs_path():
 
 def load_prefs() -> dict:
     try:
-        return json.loads(_prefs_path().read_text("utf-8"))
+        data = json.loads(_prefs_path().read_text("utf-8-sig"))
     except (OSError, ValueError):
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_prefs(**kw) -> None:
@@ -824,6 +825,10 @@ class BookView(QWidget):
     def _toc_allowed(self, loc: Loc) -> bool:
         return not self.BLOCK or self._barrier_loc() is None or loc < self._barrier_loc()
 
+    def _toc_loc(self) -> Loc:
+        """位置相关的目录高亮点；书页可按当前排版返回更合适的位置。"""
+        return self.current_loc()
+
     def _build_aa(self, panel: AaPanel) -> None:
         pass
 
@@ -945,7 +950,7 @@ class BookView(QWidget):
     def _open_toc(self) -> None:
         if self.book is None:
             return
-        cur = self.current_loc()
+        cur = self._toc_loc()
         toc = self.book.toc
         items = []
         cur_i, best = -1, None

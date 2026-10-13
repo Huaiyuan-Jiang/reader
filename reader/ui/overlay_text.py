@@ -68,7 +68,7 @@ class OverlayText:
         self.target = target
         self._last: tuple | None = None
         self.pushes = 0
-        theme.on_change(lambda _n: self._repush())
+        self._disconnect_theme = theme.on_change(lambda _n: self._repush())
 
     def update(self, state: str, remaining_seconds: float) -> bool:
         key = (state, minutes_left(remaining_seconds))
@@ -91,4 +91,5 @@ class OverlayText:
 
     def detach(self) -> None:
         """遮罩撤了（时间到 / 结束），以后不再推字。"""
+        self._disconnect_theme()
         self.target = None

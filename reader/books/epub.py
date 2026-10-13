@@ -155,6 +155,10 @@ class EpubBook(Book):
                 self.blocks.append(p.blocks)
                 self._ids.append(p.ids)
 
+        if not self.docs or not any(self.blocks):
+            self.zip.close()
+            raise ValueError('这个 EPUB 没有可阅读的正文，请选择完整的电子书。')
+
         nav = next((h for h, _, props in manifest.values() if "nav" in props.split()), "")
         ncx = next((h for h, mt, _ in manifest.values() if mt == "application/x-dtbncx+xml"), "")
         if nav in names:

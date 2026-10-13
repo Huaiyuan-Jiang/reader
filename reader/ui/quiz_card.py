@@ -93,7 +93,7 @@ def restyle(widget: QWidget, template: str) -> None:
                 w.setStyleSheet(sheet(template))
             except RuntimeError:
                 pass
-    theme.on_change(again)
+    theme.on_change(again, owner=widget)
 
 
 def repolish(w: QWidget) -> None:

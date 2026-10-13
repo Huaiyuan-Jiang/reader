@@ -10,6 +10,7 @@ os.environ['PATH'] = os.pathsep.join(map(str, [Path(sys.prefix) / 'Scripts',
     Path(sys.base_prefix), Path(sys.base_prefix) / 'DLLs', windows / 'System32', windows]))
 hidden = collect_submodules('reader') + collect_submodules('winrt')
 metadata = []
+metadata.append(('docs/guide.html', 'docs'))
 for package in ('claude-agent-sdk', 'mcp', 'mcp-types', 'jsonschema', 'referencing'):
     metadata += copy_metadata(package)
 a = Analysis(

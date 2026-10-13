@@ -18,8 +18,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QMainWindow, QMenu, QScrollArea,
                                QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -502,6 +502,9 @@ class ShelfWindow(QMainWindow):
         self.ai_settings_btn = Button('AI 设置', 'ghost', 'sm')
         self.ai_settings_btn.clicked.connect(self.open_ai_settings)
         self.side.addWidget(self.ai_settings_btn)
+        self.guide_btn = Button('新手教程', 'ghost', 'sm')
+        self.guide_btn.clicked.connect(self.open_guide)
+        self.side.addWidget(self.guide_btn)
         self.side.addSpacing(8)
         self.ai_dot = Dot("t5")
         self.ai_text = cap("正在看 AI 登录了没有…")
@@ -521,10 +524,19 @@ class ShelfWindow(QMainWindow):
         self._clock.start()
 
         self.refresh()
+        for warning in getattr(library, 'load_warnings', []):
+            self.add_notice(warning, kind='warn')
         if check_login:
-            QTimer.singleShot(0, lambda: self.banner.recheck(quiet=True))
+            QTimer.singleShot(0, self, lambda: self.banner.recheck(quiet=True))
 
     # ── 刷新 ────────────────────────────────────────────
+    def open_guide(self) -> bool:
+        guide = Path(__file__).resolve().parents[2] / 'docs' / 'guide.html'
+        if guide.is_file() and QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide))):
+            return True
+        self.add_notice('教程无法打开，请到 reader 的 GitHub Releases 下载新手教程。', kind='warn')
+        return False
+
     def refresh(self) -> None:
         self.status = read_status(self.status_path)
         self._ocr_watch = []
@@ -578,10 +590,13 @@ class ShelfWindow(QMainWindow):
             scroll.setWidget(inner)
             self.body.addWidget(scroll, 1)
         self._build_side()
-        QTimer.singleShot(0, self._restore_focus)
+        QTimer.singleShot(0, self, self._restore_focus)
 
     def _restore_focus(self) -> None:
         """重建后原来有焦点的控件没了，Qt 会把焦点随手交给下一个（常常是右下角的亮 / 暗）：交回「开始读」。"""
+        from shiboken6 import isValid
+        if not isValid(self):
+            return
         from PySide6.QtWidgets import QApplication
         fw = QApplication.focusWidget()
         card = self.current_card
@@ -811,7 +826,12 @@ class ShelfWindow(QMainWindow):
 
     def _last_dir(self) -> str:
         d = self.library.setting("last_add_dir")
-        return d if d and Path(d).is_dir() else str(Path.home() / "Downloads")
+        try:
+            if isinstance(d, str) and d and Path(d).is_dir():
+                return d
+        except (OSError, ValueError):
+            pass
+        return str(Path.home() / "Downloads")
 
     def add_books_dialog(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, "添加书", self._last_dir(), "书 (*.pdf *.epub)")
@@ -821,11 +841,11 @@ class ShelfWindow(QMainWindow):
 
     def add_books(self, paths: list[Path]) -> None:
         """在后台一本本打开、加进书架。行上方那句话说明正在加哪本。"""
+        before = {b.id for b in self.library.books()}
         for p in paths:
             if p.suffix.lower() not in BOOK_EXTS:
                 self.add_notice(f"「{p.name}」没加：只能放 PDF 或 EPUB。", kind="warn")
                 continue
-            before = {b.id for b in self.library.books()}
             self._adding.append(p.name)
             self._set_hint()
 
@@ -833,13 +853,16 @@ class ShelfWindow(QMainWindow):
                 self._adding.remove(p.name)
                 if err is not None:
                     self.add_notice(f"「{p.name}」没加上：{err}", kind="warn")
+                    if not self._adding:
+                        self.refresh()
                     self._set_hint()
                     return
                 self._hint_text = (f"《{res.title}》已经在书架上了" if res.id in before
                                    else "也可以直接把文件拖进来")
                 if res.scanned:
                     self.ocr.enqueue(res)       # 扫描版：后台用本机文字识别补上文字
-                self.refresh()
+                if not self._adding:
+                    self.refresh()
                 self._set_hint()
             background(lambda p=p: self.library.add(p), done)
 

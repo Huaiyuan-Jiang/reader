@@ -85,7 +85,7 @@ def on_theme(widget: QWidget, fn: Callable[[QWidget], None]) -> None:
                 fn(w)
             except RuntimeError:     # C++ 对象已删
                 pass
-    theme.on_change(_again)
+    theme.on_change(_again, owner=widget)
 
 
 def rgba(key: str, alpha: float | None = None) -> str:

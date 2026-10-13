@@ -664,7 +664,9 @@ class EpubView(BookView):
     def set_mode(self, mode: str) -> None:
         if mode == self._mode or mode not in ("paged", "scroll"):
             return
-        anchor = self._top_pos() if self._ready() else None
+        # Keep the reading anchor, not the topmost visible line. In paged mode a
+        # spread can begin above the paragraph the reader last landed on.
+        anchor = (self._anchor or self._top_pos()) if self._ready() else None
         self._mode = mode
         save_prefs(epub_mode=mode)
         self._sel = None
@@ -1606,6 +1608,15 @@ class EpubView(BookView):
         self.bar.set_hl_count(len({h.get("group") or id(h) for h in self._hls}))
         self.bar.prev.setEnabled(not (d == self._nonempty[0] and pos == 0 and
                                       (self._mode == "paged" or self._soff <= 0)))
+        if self._mode == "paged":
+            pages = self._ensure_paged(d).pages
+            has_next = pos is not None and self._cur[1] + self._step() < len(pages)
+            has_next = has_next or self._next_ch(d) is not None
+        else:
+            ch = self._ensure_scroll(d)
+            max_off = max(0.0, ch.sh + self._gap() - self._view_h())
+            has_next = self._soff < max_off - 0.5 or self._next_ch(d) is not None
+        self.bar.next.setEnabled(has_next)
 
     def keyPressEvent(self, e) -> None:
         if e.modifiers() & Qt.ControlModifier:

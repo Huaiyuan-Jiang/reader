@@ -44,20 +44,26 @@ class Profile:
     harness_command: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
+        text_fields = ('id', 'label', 'protocol', 'model', 'base_url', 'api_key_env',
+                       'auth_header', 'token_parameter', 'claude_config_dir', 'cli_path')
+        if any(not isinstance(getattr(self, key), str) for key in text_fields):
+            raise ConfigError('AI 配置的文字字段格式有误，请打开 AI 设置检查')
         if not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', self.id):
             raise ConfigError('配置 ID 只能包含小写字母、数字、下划线和连字符')
         if self.protocol not in PROTOCOLS:
             raise ConfigError('接口类型不支持')
         if not self.label.strip() or not self.model.strip():
             raise ConfigError('请填写名称和模型 ID')
-        if not isinstance(self.timeout, int) or not 1 <= self.timeout <= 1800:
+        if type(self.timeout) is not int or not 1 <= self.timeout <= 1800:
             raise ConfigError('超时需在 1 到 1800 秒之间')
-        if not isinstance(self.max_tokens, int) or not 16 <= self.max_tokens <= 131072:
+        if type(self.max_tokens) is not int or not 16 <= self.max_tokens <= 131072:
             raise ConfigError('输出上限需在 16 到 131072 之间')
         if not isinstance(self.supports_images, bool):
             raise ConfigError('图片支持需填写 true 或 false')
         if self.api_key_env and not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', self.api_key_env):
             raise ConfigError('API Key 环境变量名无效')
+        if self.api_key_env and re.fullmatch(r'(?i)(?:sk|rk|pk)[a-z0-9_-]{12,}', self.api_key_env):
+            raise ConfigError('此栏应填写环境变量名称（例如 OPENAI_API_KEY），不要粘贴 API Key')
         if not re.fullmatch(r'[A-Za-z0-9-]+', self.auth_header):
             raise ConfigError('认证头名称无效')
         if self.token_parameter not in ('max_tokens', 'max_completion_tokens'):
@@ -66,15 +72,40 @@ class Profile:
             raise ConfigError('附加请求参数需为 JSON 对象')
         forbidden = {'model', 'messages', 'input', 'instructions', 'stream', 'stream_options',
                      'max_tokens', 'max_completion_tokens', 'max_output_tokens', 'system',
-                     'api_key', 'authorization', 'headers', 'store'}
-        if forbidden.intersection(k.lower() for k in self.extra_body):
+                     'api_key', 'apikey', 'api-key', 'x-api-key', 'authorization',
+                     'proxy-authorization', 'headers', 'secret', 'credentials', 'store'}
+        if any(not isinstance(k, str) for k in self.extra_body):
+            raise ConfigError('附加请求参数的名称需为文字')
+
+        def has_sensitive_key(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if not isinstance(key, str):
+                        return True
+                    normalized = key.lower().replace('_', '-')
+                    if (normalized in forbidden or
+                            (normalized.startswith('x-') and normalized.endswith('-api-key')) or
+                            normalized.endswith('-api-key')):
+                        return True
+                    if has_sensitive_key(child):
+                        return True
+            elif isinstance(value, list):
+                return any(has_sensitive_key(child) for child in value)
+            return False
+
+        if has_sensitive_key(self.extra_body):
             raise ConfigError('附加参数不能覆盖模型、正文、凭据或流式设置')
         if not isinstance(self.harness_command, list) or any(not isinstance(a, str) or not a or '\x00' in a for a in self.harness_command):
             raise ConfigError('本地 Harness 命令需要字符串数组')
         if self.protocol not in ('claude_code', 'local_harness'):
-            u = urlsplit(self.base_url)
-            local = u.hostname in ('localhost', '127.0.0.1', '::1')
-            if not u.hostname or u.username or u.password or u.query or u.fragment:
+            try:
+                u = urlsplit(self.base_url)
+                hostname = u.hostname
+                username, password = u.username, u.password
+            except ValueError as e:
+                raise ConfigError('接口地址格式无效，请检查网址和 IPv6 方括号') from e
+            local = hostname in ('localhost', '127.0.0.1', '::1')
+            if not hostname or username or password or u.query or u.fragment:
                 raise ConfigError('请填写不含凭据、查询参数的接口根地址')
             if u.scheme != 'https' and not (u.scheme == 'http' and local):
                 raise ConfigError('远程接口需使用 HTTPS；本机接口可以使用 HTTP')
@@ -102,7 +133,7 @@ def defaults() -> dict:
 
 
 def validate(data: dict) -> dict[str, Profile]:
-    if not isinstance(data, dict) or data.get('version') != 1:
+    if not isinstance(data, dict) or type(data.get('version')) is not int or data.get('version') != 1:
         raise ConfigError('AI 配置版本不支持（需要 version=1）')
     result = {}
     try:

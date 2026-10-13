@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 import uuid
@@ -66,12 +67,34 @@ def atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
+def _backup_bad_json(path: Path) -> None:
+    """Preserve an unreadable or non-object JSON file before a later write replaces it."""
+    path = Path(path)
+    try:
+        if not path.is_file():
+            return
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        backup = path.with_name(f"{path.name}.bad-{stamp}")
+        shutil.copy2(path, backup)
+    except OSError:
+        # Keep reads resilient when a damaged file is also inaccessible to copy.
+        pass
+
+
 def read_json(path: Path) -> dict | None:
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        with open(path, "r", encoding="utf-8-sig") as f:
+            value = json.load(f)
+        if isinstance(value, dict):
+            return value
+        _backup_bad_json(path)
+    except FileNotFoundError:
         return None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        _backup_bad_json(path)
+    except OSError:
+        return None
+    return None
 
 
 # ── 会话状态 ─────────────────────────────────────────────────
@@ -85,6 +108,8 @@ class SessionState:
     heartbeat: float = 0.0
     ended_at: float | None = None
     exit_reason: str | None = None     # 紧急退出时选的原因
+    pid: int | None = None
+    credited_by_day: dict[str, float] = field(default_factory=dict)
 
     @staticmethod
     def new(planned_minutes: int, now: float) -> "SessionState":
@@ -120,8 +145,45 @@ def read_session_state(path: Path = SESSION_STATE_PATH) -> SessionState | None:
         return None
 
 
+def process_is_alive(pid: int) -> bool:
+    """Check whether a recorded owner process exists without sending it a signal."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        open_process.restype = ctypes.c_void_p
+        wait = kernel32.WaitForSingleObject
+        wait.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        wait.restype = ctypes.c_uint32
+        close = kernel32.CloseHandle
+        close.argtypes = [ctypes.c_void_p]
+        close.restype = ctypes.c_int
+        # PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE
+        handle = open_process(0x1000 | 0x00100000, 0, int(pid))
+        if not handle:
+            # Access denied is safer to treat as live: never recover another process's session.
+            return ctypes.get_last_error() == 5
+        try:
+            return wait(handle, 0) != 0  # WAIT_OBJECT_0 means signaled/dead; unknown is treated as live.
+        finally:
+            close(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def is_stale(state: SessionState, now: float, stale_after: float = STALE_AFTER) -> bool:
-    """active 但心跳老旧 —— 说明进程已经不在了。"""
+    """An active session whose heartbeat is older than the legacy timeout."""
     return state.status == ACTIVE and (now - state.heartbeat) > stale_after
 
 
@@ -170,8 +232,7 @@ class StatusStore:
     def _save(self, data: dict) -> None:
         atomic_write_json(self.path, data)
 
-    def _today(self, data: dict) -> dict:
-        key = _day_key(self._clock())
+    def _day(self, data: dict, key: str) -> dict:
         day = data.setdefault("days", {}).get(key)
         if day is None:
             day = asdict(DailySummary(date=key, target_minutes=self.target_minutes))
@@ -179,22 +240,34 @@ class StatusStore:
         day.setdefault("target_minutes", self.target_minutes)
         return day
 
-    def _commit(self, mutate) -> DailySummary:
+    def _today(self, data: dict) -> dict:
+        return self._day(data, _day_key(self._clock()))
+
+    def _commit(self, mutate, *, at: float | None = None,
+                day_key: str | None = None) -> DailySummary:
         data = self._load()
-        day = self._today(data)
+        key = day_key or _day_key(self._clock() if at is None else at)
+        day = self._day(data, key)
         mutate(day)
         day["updated_at"] = self._clock()
-        data["today"] = day  # 顶层放一份今天的，读的时候不用按日期找
+        today_key = _day_key(self._clock())
+        today = data.setdefault("days", {}).get(today_key)
+        if today is not None:
+            data["today"] = today
         self._save(data)
         return DailySummary(**{k: v for k, v in day.items() if k in DailySummary.__dataclass_fields__})
 
-    def add_credit(self, seconds: float) -> DailySummary:
-        return self._commit(lambda d: d.update(credited_seconds=d["credited_seconds"] + max(0.0, seconds)))
+    def add_credit(self, seconds: float, *, at: float | None = None,
+                   day_key: str | None = None) -> DailySummary:
+        def mutate(day):
+            day["credited_seconds"] = max(0.0, day["credited_seconds"] + seconds)
+        return self._commit(mutate, at=at, day_key=day_key)
 
-    def bump(self, field: str, by: int = 1) -> DailySummary:
+    def bump(self, field: str, by: int = 1, *, at: float | None = None,
+             day_key: str | None = None) -> DailySummary:
         def m(d):
             d[field] = d.get(field, 0) + by
-        return self._commit(m)
+        return self._commit(m, at=at, day_key=day_key)
 
     def log_emergency(self, reason: str | None) -> DailySummary:
         """记一次紧急退出（次数 + 时间 + 原因）。"""
@@ -204,7 +277,7 @@ class StatusStore:
         def m(d):
             d["emergency_exits"] = d.get("emergency_exits", 0) + 1
             d.setdefault("emergency_log", []).append(entry)
-        return self._commit(m)
+        return self._commit(m, at=now)
 
     def week_total(self, field_name: str) -> int | float:
         """这周（周一起）某个计数的合计，比如这周紧急退出几次。"""

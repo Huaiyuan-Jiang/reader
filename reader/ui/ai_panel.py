@@ -263,17 +263,21 @@ class Reply(QWidget):
         self._render()
 
     def _render(self) -> None:
-        cut = rich_text.split_stable(self.buffer)
+        # Bound Qt layout work while retaining the full answer in buffer.
+        display = self.buffer[:32000]
+        cut = rich_text.split_stable(display)
         # 写完的段落定下来。收尾时也照样切：字要是一口气全到了（没赶上 40ms 的排版），
         # 结果也跟一段段到的一样，不会整段挤在 tail 里（测试曾因此时有时无地失败）
         if cut > self.frozen:
-            piece = self.buffer[self.frozen:cut].strip("\n")
+            piece = display[self.frozen:cut].strip("\n")
             if piece.strip():
                 lab = rich_label(self._md(piece))
                 self.v.insertWidget(len(self.chunks), lab)
                 self.chunks.append((piece, lab))
             self.frozen = cut
-        rest = self.buffer[self.frozen:].strip("\n")
+        rest = display[self.frozen:].strip("\n")
+        if len(self.buffer) > len(display):
+            rest += '\n\n（回答过长，界面仅显示前 32000 字；完整回答仍保留在本次会话中。）'
         if self.live:
             html = self._md(rest, cursor=True) if rest.strip() else \
                 rich_text.md_to_html("在想…", 14, 1.78, tone="t4", cursor="acc")
