@@ -8,7 +8,7 @@ reader 是 Windows 桌面阅读器，书页在右边，AI 问答在左边。普�
 
 ## 1. 下载并打开
 
-试用这次修复时，请运行Release 附件中的 `reader-windows-x64.exe`。新版尚未上传 GitHub。
+请下载 v1.0.1 或更新版本的 `reader-windows-x64.exe`。
 
 打开 [reader 的 GitHub Releases](https://github.com/Huaiyuan-Jiang/reader/releases)，在最新版本的 Assets 中下载 `reader-windows-x64.exe`，双击运行。它适用于 Windows 10/11 x64，不需要安装 Python。第一次打开要解压运行组件，可能比之后慢一些。
 
