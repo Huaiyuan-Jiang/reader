@@ -1,7 +1,8 @@
-PySide6>=6.11
+PySide6==6.11.1
 pymupdf>=1.28
 claude-agent-sdk>=0.2.150
 httpx>=0.28,<1
+numpy>=2,<3
 # 扫描版文字识别（Windows 自带 OCR），没装也能读书
 winrt-runtime
 winrt-Windows.Media.Ocr

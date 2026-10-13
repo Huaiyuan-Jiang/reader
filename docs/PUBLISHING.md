@@ -1,21 +1,40 @@
 # 发布说明
 
-公开源码在 <https://github.com/Huaiyuan-Jiang/reader>，按 GPL-3.0 授权（见 `LICENSE`）。公开仓库由下面的源码包生成，不带开发历史、截图和个人数据。
+源码仓库：<https://github.com/Huaiyuan-Jiang/reader>。
 
-项目可以在本机运行，已增加可编辑的多模型配置。`tools/package_source.py` 会生成干净的源码 ZIP，显式排除个人凭据、配置、阅读数据、缓存、截图和 `.git`。
+## Windows EXE
+
+Windows x64、Python 3.13 和 PyInstaller 构建，双击 reader-windows-x64.exe 即可运行，无需安装 Python。Claude Code 模式需要用户自行安装并登录 Claude Code；HTTP API 模式需要用户自己的 API Key。字体默认使用系统字体，发行包不收集本机字体目录。
+
+EXE 未进行代码签名。首次打开需要解压组件，可能比后续启动慢。
+
+## 重建
+
+在新建的 Python 3.13 虚拟环境中执行：
 
 ```powershell
-python tools/package_source.py --output "你的目录\reader-source.zip"
+python -m pip install -r requirements-build.txt
+python -m PyInstaller --clean --noconfirm reader.spec
 ```
 
-源码 ZIP 包含运行代码、测试、依赖清单、启动文件、配置示例、许可证和本文档。不包含任何 API Key。解压后主人安装依赖、设置自己的 AI 就能使用。
+结果位于 dist/reader.exe。不要从包含个人凭据或阅读数据的开发目录构建。
 
-## 验证
+## 发布检查
 
-网络协议用模拟 HTTP 传输验证。真实 API 的额度、模型权限与图片能力需要在主人自己的账户上点击测试连接。
+```powershell
+python -m unittest discover -s tests
+dist/reader.exe --self-test smoke-result.json
+python tools/package_source.py --output reader-source.zip
+```
 
-## 尚未完成
+自检使用生成的 PDF / EPUB 和临时数据，不调用真实模型，不开启真实锁屏。检查 PDF 渲染及子进程、EPUB、DPAPI、AI 与 OCR 导入和书架界面。真实模型权限、OCR 系统语言及其他电脑的运行情况需另外验证。
 
-- 新电脑安装并用自己的模型配置做一次实际阅读验收。目前发布的是源码，不是签名的安装包或 Windows EXE。
+Release 提供 EXE、对应源码、SHA256 校验文件、第三方许可包和本轮安全检查说明。源码打包仅使用显式清单，排除 .git、凭据、个人配置、书籍、笔记、阅读记录、截图和缓存。
 
-不要直接共享本机数据目录、Claude 登录目录或携带个人 Key 的打包程序。
+自有源码使用 GPL-3.0；第三方组件的许可独立适用，特别是 PyMuPDF / MuPDF 的 AGPL-3.0，详见 THIRD_PARTY_NOTICES.md。
+
+## 隐私边界
+
+程序将书架、阅读记录、笔记、OCR 缓存和加密凭据存放在当前用户的数据目录。启用 AI 后，阅读片段、提问、选用的页图及笔记所需上下文会发送给用户选择的服务。软件不包含开发者的 AI 凭据或预置个人阅读数据。
+
+GitHub 账号名称、提交匿名邮箱、仓库及 Release 发布者是 GitHub 公开元数据；使用当前账号发布不能提供身份匿名性。

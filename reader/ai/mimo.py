@@ -2,8 +2,7 @@
 
 - 接口：POST https://api.xiaomimimo.com/v1/chat/completions，key 放在 `api-key` 头里（不是 Authorization）。
   文档：https://mimo.mi.com/docs/en-US/quick-start/summary/first-api-call
-- key：环境变量 READER_MIMO_KEY，或在 AI 设置里填（加密存在本机）。旧版的本机文件
-  `reader/ai/_mimo_key.py` 只为兼容，不进 git，也不进源码包和发行包。
+- key：环境变量 READER_MIMO_KEY，或在 AI 设置里填（加密存在本机）。
 - 接口是无状态的：多轮对话在这边记（session_id → 消息列表），跟 claude.run 的 resume 用法一样。
 - 思考：问答关掉（`thinking: disabled`，第一个字就能流出来）；出题、写笔记开着（慢一点，题出得好）。
   开着思考时，文档要求把 reasoning_content 留在后面几轮的消息里 —— 一次性问答没有后面几轮，不用管。
@@ -38,11 +37,8 @@ def api_key() -> str:
     env = os.environ.get("READER_MIMO_KEY", "").strip()
     if env:
         return env
-    try:
-        from . import _mimo_key
-        return str(getattr(_mimo_key, "KEY", "") or "").strip()
-    except ImportError:
-        return ""
+    from . import secrets
+    return secrets.get('mimo')
 
 
 def available() -> bool:
@@ -59,7 +55,7 @@ def _friendly(status: int, body: str) -> str:
         return "MiMo 这会儿请求太多（429，rate limit），过一会儿再试"
     if status >= 500:
         return f"MiMo 服务器出错了（{status}），过一会儿再试"
-    return f"MiMo 报错 {status}：{body[:300]}"
+    return f"MiMo 请求失败（HTTP {status}），请检查模型与接口设置"
 
 
 def _user_content(prompt: str, images: list[bytes] | None):
@@ -125,7 +121,7 @@ def run(prompt: str, *, system: str | None = None, resume: str | None = None,
                 except ValueError:
                     continue
                 if ev.get("error"):
-                    final = Result(text="".join(streamed), error=f"MiMo 报错：{ev['error']}")
+                    final = Result(text="".join(streamed), error="MiMo 返回错误，请检查模型与接口设置")
                     break
                 if ev.get("usage"):
                     usage = ev["usage"]

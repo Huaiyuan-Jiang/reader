@@ -8,8 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOP = {'README.md', 'requirements.txt', '.gitignore', '.gitattributes', '.env.example',
-       'ai-config.example.json', '打开reader.bat', 'LICENSE'}
-DOCS = {'AI_CONFIGURATION.md', 'HARNESS.md', 'PUBLISHING.md'}
+       'ai-config.example.json', '打开reader.bat', 'LICENSE', 'reader.spec', 'requirements-build.txt', 'THIRD_PARTY_NOTICES.md'}
+DOCS = {'AI_CONFIGURATION.md', 'HARNESS.md', 'PUBLISHING.md', 'SECURITY_REVIEW.md'}
 PATTERNS = [re.compile(r'\bsk-(?:ant-)?[A-Za-z0-9_-]{24,}'),
             re.compile(r'(?i)(?:api[_-]?key|access[_-]?token)\s*[=:]\s*[\x22\x27][A-Za-z0-9_-]{24,}')]
 
@@ -19,7 +19,7 @@ def source_files():
     for dirname in ('reader', 'tests'):
         paths.extend(p for p in (ROOT / dirname).rglob('*.py')
                      if p.name != '_mimo_key.py' and '__pycache__' not in p.parts)
-    paths.append(ROOT / 'tools' / 'package_source.py')
+    paths.extend(ROOT / 'tools' / name for name in ('package_source.py', 'frozen_entry.py'))
     paths.extend(ROOT / 'docs' / n for n in DOCS if (ROOT / 'docs' / n).is_file())
     return sorted(set(paths))
 

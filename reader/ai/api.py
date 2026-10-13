@@ -27,11 +27,7 @@ def key_for(p: Profile) -> str:
     key = os.environ.get(p.api_key_env, '').strip() if p.api_key_env else ''
     if key:
         return key
-    key = secrets.get(p.id)
-    if not key and p.id == 'mimo':
-        from .mimo import api_key
-        key = api_key()  # 旧版兼容入口，不随仓库分发
-    return key
+    return secrets.get(p.id)
 
 
 def ready(p: Profile) -> bool:

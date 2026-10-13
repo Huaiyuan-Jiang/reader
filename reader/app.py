@@ -119,7 +119,7 @@ class ReaderApp(QObject):
             scr = factory(entry, minutes, self.library)
             self.screen = scr
             scr.finished.connect(self._finished)
-            log.info("开始读《%s》%d 分钟", entry.title, minutes)
+            log.info("开始阅读，计划 %d 分钟", minutes)
             self.win.hide()
             scr.start()
         except Exception as e:  # noqa: BLE001
@@ -169,7 +169,7 @@ class ReaderApp(QObject):
                     log.exception("把笔记路径记进这次读书失败")
                 return path
             summary["rewrite_note"] = rewrite
-        log.info("读完：%s", {k: v for k, v in summary.items() if not callable(v)})
+        log.info("阅读结束，原因：%s", summary.get("reason", "done"))
         self.win.bring_to_front()
         if summary.get("reason") == "emergency_exit":
             self.win.show_shelf()
@@ -217,7 +217,7 @@ def forced_quit_notice() -> str | None:
     from reader.ui.shelf_kit import when_label
     mins = int(prev.credited_seconds // 60)
     got = f"读过的 {mins} 分钟照算，" if mins else ""
-    log.info("上次被强行关掉：%s", prev)
+    log.info("检测到未正常结束的阅读会话")
     return f"上次读书（{when_label(when)}）是被强行关掉的。{got}这次也记进阅读记录了。"
 
 

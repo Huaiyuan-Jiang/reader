@@ -4,7 +4,9 @@ Windows 桌面软件，右边读书，左边问 AI。支持 PDF、EPUB、划线�
 
 ## 运行
 
-需要 Windows、Python 3.13。先安装依赖，再双击 **`打开reader.bat`**。源码包需主人自行安装 Python；目前未制作安装器。
+在 [Releases](https://github.com/Huaiyuan-Jiang/reader/releases) 下载 `reader-windows-x64.exe`，双击即可运行，无需安装 Python。适用于 Windows 10 / 11 的 x64 电脑。首次打开会稍慢，程序需要解压运行组件。
+
+如从源码运行，需要 Windows、Python 3.13。先安装依赖，再双击 **`打开reader.bat`**：
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -67,3 +69,5 @@ python tools/package_source.py --output "reader-source.zip"
 ## 许可证
 
 按 [GNU GPL v3.0](LICENSE) 授权：可以自由使用、修改和再发布，再发布（含修改版）时也须按 GPL-3.0 公开源码。
+
+打包版包含 PyMuPDF / MuPDF（AGPL-3.0）等第三方组件，其条款继续适用；见 [第三方许可说明](THIRD_PARTY_NOTICES.md)。Release 同时提供对应源码、构建依赖版本和许可证。exe 未做代码签名。
