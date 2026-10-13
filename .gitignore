@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.try_lock_state/
+# 旧版本本机 MiMo 凭据；禁止随源码或发行包分享
+reader/ai/_mimo_key.py
+.env
+.env.*
+!.env.example
+ai-config.json
+ai-secrets.json
+.claude-reader/
+library.json
+status.json
+session.json
+# 只管项目根目录：不带斜杠的 books/ 会连 reader/books/ 的代码一起忽略
+/books/
+/covers/
+/笔记/
+.pytest_cache/
+.venv/
+build/
+dist/
+*.log

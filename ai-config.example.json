@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "active": "auto",
+  "profiles": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "protocol": "claude_code",
+      "model": "claude-opus-5-5",
+      "base_url": "",
+      "api_key_env": "",
+      "auth_header": "Authorization",
+      "supports_images": true,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {},
+      "claude_config_dir": "~/.claude-reader",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "openai",
+      "label": "GPT / OpenAI",
+      "protocol": "responses",
+      "model": "gpt-6-astra",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "auth_header": "Authorization",
+      "supports_images": true,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {},
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "protocol": "chat_completions",
+      "model": "deepseek-flash",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "auth_header": "Authorization",
+      "supports_images": true,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "anthropic",
+      "label": "Claude API",
+      "protocol": "anthropic_messages",
+      "model": "claude-opus-5-5",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "auth_header": "x-api-key",
+      "supports_images": true,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {},
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "mimo",
+      "label": "MiMo",
+      "protocol": "chat_completions",
+      "model": "mimo-v2.6-pro",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key_env": "READER_MIMO_KEY",
+      "auth_header": "api-key",
+      "supports_images": true,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_completion_tokens",
+      "extra_body": {
+        "thinking": {
+          "type": "disabled"
+        }
+      },
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "custom",
+      "label": "自定义兼容接口",
+      "protocol": "chat_completions",
+      "model": "your-model-id",
+      "base_url": "http://localhost:11434/v1",
+      "api_key_env": "READER_CUSTOM_KEY",
+      "auth_header": "Authorization",
+      "supports_images": false,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {},
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    },
+    {
+      "id": "harness",
+      "label": "本地 Harness",
+      "protocol": "local_harness",
+      "model": "local-harness",
+      "base_url": "",
+      "api_key_env": "",
+      "auth_header": "Authorization",
+      "supports_images": false,
+      "max_tokens": 8192,
+      "timeout": 240,
+      "token_parameter": "max_tokens",
+      "extra_body": {},
+      "claude_config_dir": "",
+      "cli_path": "",
+      "harness_command": []
+    }
+  ]
+}
