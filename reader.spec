@@ -28,4 +28,5 @@ pyz = PYZ(a.pure)
 a.binaries = [item for item in a.binaries if item[0].lower() != 'icuuc.dll']
 exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='reader',
           debug=False, bootloader_ignore_signals=False, strip=False, upx=False,
-          console=False, disable_windowed_traceback=False)
+          console=False, disable_windowed_traceback=False,
+          version=str(Path(SPECPATH) / 'tools' / 'windows_version_info.txt'))

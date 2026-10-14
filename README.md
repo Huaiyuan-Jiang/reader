@@ -8,6 +8,8 @@ Windows 桌面软件，右边读书，左边问 AI。支持 PDF、EPUB、划线�
 
 在 [Releases](https://github.com/Huaiyuan-Jiang/reader/releases) 下载 `reader-windows-x64.exe`，双击即可运行，无需安装 Python。适用于 Windows 10 / 11 的 x64 电脑。首次打开会稍慢，程序需要解压运行组件。
 
+当前 v1.0.1 尚未签名。签名状态、构建检查和后续签名流程见 [代码签名与发布政策](docs/CODE_SIGNING.md)。
+
 如从源码运行，需要 Windows、Python 3.13。先安装依赖，再双击 **`打开reader.bat`**：
 
 ```powershell

@@ -8,6 +8,8 @@ Windows x64、Python 3.13 和 PyInstaller 构建，双击 reader-windows-x64.exe
 
 EXE 未进行代码签名。首次打开需要解压组件，可能比后续启动慢。
 
+已提供云端构建、可选签名及签名后检查流程；服务尚需开通，详见 [代码签名与发布政策](CODE_SIGNING.md)。不要将尚未签名的构建标成已签名。工作流默认只上传构建产物，不自动发布 Release。
+
 ## 重建
 
 在新建的 Python 3.13 虚拟环境中执行：

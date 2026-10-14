@@ -1,0 +1,139 @@
+name: Windows build and signing
+on:
+  push:
+    branches: [main, build/windows-signing]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: 'Signing service (must already be approved and configured)'
+        type: choice
+        options: [none, azure, signpath]
+        default: none
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Test isolated modules
+        run: python tools/run_tests.py
+      - name: Build executable
+        run: python -m PyInstaller --clean --noconfirm reader.spec
+      - name: Verify packaged source and runtime
+        run: |
+          python tools/audit_frozen.py dist/reader.exe --output reports/archive.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tools/verify_windows_release.ps1 -Exe dist/reader.exe -ReportDirectory reports/runtime
+          python tools/package_source.py --output dist/reader-source.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: unsigned
+        with:
+          name: reader-unsigned-${{ github.sha }}
+          path: dist/reader.exe
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reader-build-reports-${{ github.sha }}
+          path: |
+            reports/
+            dist/reader-source.zip
+    outputs:
+      artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+  azure:
+    if: github.event_name == 'workflow_dispatch' && inputs.signing == 'azure' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: windows-2022
+    environment: release-signing
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Require configured service
+        env:
+          CLIENT: ${{ vars.AZURE_CLIENT_ID }}
+          TENANT: ${{ vars.AZURE_TENANT_ID }}
+          SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+          PROFILE: ${{ vars.SIGNING_PROFILE }}
+        run: |
+          foreach ($name in @('CLIENT','TENANT','SUBSCRIPTION','ENDPOINT','ACCOUNT','PROFILE')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing configuration: $name" }
+          }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reader-unsigned-${{ github.sha }}
+          path: signed
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+        with:
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}/signed
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: reader
+          description-url: https://github.com/Huaiyuan-Jiang/reader
+      - name: Verify signature, timestamp and runtime
+        run: ./tools/verify_windows_release.ps1 -Exe signed/reader.exe -ReportDirectory signed/verification -RequireSignature
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reader-signed-azure-${{ github.sha }}
+          path: signed/
+          if-no-files-found: error
+  signpath:
+    if: github.event_name == 'workflow_dispatch' && inputs.signing == 'signpath' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: windows-2022
+    environment: release-signing
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Require configured service
+        env:
+          TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          ORGANIZATION: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          PROJECT: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          foreach ($name in @('TOKEN','ORGANIZATION','PROJECT','POLICY')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing configuration: $name" }
+          }
+      - uses: SignPath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+      - name: Verify signature, timestamp and runtime
+        run: ./tools/verify_windows_release.ps1 -Exe signed/reader.exe -ReportDirectory signed/verification -RequireSignature
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reader-signed-signpath-${{ github.sha }}
+          path: signed/
+          if-no-files-found: error

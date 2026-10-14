@@ -21,3 +21,7 @@ session.json
 build/
 dist/
 *.log
+*.pfx
+*.p12
+*.pem
+*.key
