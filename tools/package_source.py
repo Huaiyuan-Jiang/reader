@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TOP = {'README.md', 'requirements.txt', '.gitignore', '.gitattributes', '.env.example',
        'ai-config.example.json', '打开reader.bat', 'LICENSE', 'reader.spec', 'requirements-build.txt', 'THIRD_PARTY_NOTICES.md'}
 DOCS = {'AI_CONFIGURATION.md', 'HARNESS.md', 'PUBLISHING.md', 'SECURITY_REVIEW.md',
-        'GETTING_STARTED.md', 'guide.html', 'VALIDATION_2026-10-13.md'}
+        'GETTING_STARTED.md', 'guide.html', 'VALIDATION_2026-10-13.md', 'CODE_SIGNING.md'}
 PATTERNS = [re.compile(r'\bsk-(?:ant-)?[A-Za-z0-9_-]{24,}'),
             re.compile(r'(?i)(?:api[_-]?key|access[_-]?token)\s*[=:]\s*[\x22\x27][A-Za-z0-9_-]{24,}')]
 
@@ -20,7 +20,9 @@ def source_files():
     for dirname in ('reader', 'tests'):
         paths.extend(p for p in (ROOT / dirname).rglob('*.py')
                      if p.name != '_mimo_key.py' and '__pycache__' not in p.parts)
-    paths.extend(ROOT / 'tools' / name for name in ('package_source.py', 'frozen_entry.py'))
+    paths.extend(ROOT / 'tools' / name for name in ('package_source.py', 'frozen_entry.py',
+                 'windows_version_info.txt', 'verify_windows_release.ps1', 'audit_frozen.py', 'run_tests.py'))
+    paths.append(ROOT / '.github' / 'workflows' / 'windows-release-check.yml')
     paths.extend(ROOT / 'docs' / n for n in DOCS if (ROOT / 'docs' / n).is_file())
     for name in ('shelf.png', 'start.png', 'ai-settings.png', 'reading.png', 'exit.png'):
         asset = ROOT / 'docs' / 'guide-assets' / name

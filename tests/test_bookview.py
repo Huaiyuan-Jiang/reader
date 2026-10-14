@@ -382,7 +382,9 @@ class EpubViewTests(unittest.TestCase):
         pump(v.layout_done)
         self.assertEqual(v.current_loc(), loc)
         prefs = load_prefs()
-        self.assertEqual((prefs["epub_px"], prefs["epub_face"], prefs["epub_weight"], prefs["epub_line"],
+        # A clean Windows installation may offer only the default sans face.
+        # Choosing an unchanged default does not need to write an override.
+        self.assertEqual((prefs["epub_px"], prefs.get("epub_face", "sans"), prefs["epub_weight"], prefs["epub_line"],
                           prefs["epub_width"]), (64, faces[-1], 2, "loose", "narrow"))
         w2 = EpubView()                                       # 下次打开还是这样
         self.assertEqual((w2.font_px(), w2.style().face, w2.line_key(), w2.width_key()),
